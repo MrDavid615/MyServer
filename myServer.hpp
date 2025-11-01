@@ -2,6 +2,7 @@
 #define _SERVER_HPP_
 
 #include "epoll_mode.hpp"
+#include "myHttp.hpp"
 
 class MyServer {
 public:
@@ -15,6 +16,10 @@ public:
     void StartMyServer();
 private:
     void ReadMessage(int fd, std::string mess);
+    void GET_MethodProcess(int fd, Request& req);
+    void POST_MethodProcess(int fd, Request& req);
+    void Undefine_MethodProcess(int fd);
+    void ErrorMessageProcess(int fd);
 private:
     Server server_;
 };

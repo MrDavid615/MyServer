@@ -5,47 +5,125 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <unistd.h>
 
-class Request {
+class HttpMessage {
 public:
-    bool Normalize(std::string& message) {
-        remove_r(message);
+    HttpMessage()
+        : ver("HTTP/1.1")
+    {}
 
-        int beg = 0;
-        int end = 0;
+    const std::string& GetVersion() const {
+        return ver;
+    }
+
+    const std::string& GetMessageBody() const {
+        return body;
+    }
+
+    std::string GetMessageHeadersEle(const std::string& key){
+        if(headers.find(key) == headers.end()) {
+            return "";
+        }
+        return headers[key];
+    }
+
+    void ClearMessageHeaders() {
+        headers.clear();
+    }
+
+    void SetVersion(std::string&& version) {
+        ver = version;
+    }
+
+    void SetMessageBody(std::string&& mess) {
+        body = std::move(mess);
+    }
+
+    void AddMessageHeaderEle(std::string key, std::string val) {
+        headers.emplace(key, val);
+    }
+
+protected:
+    void remove_r(std::string& mess) {
+        int s = 0;
+        int q = 0;
+        while(q < mess.size()) {
+            if(mess[q] == '\r') {
+                q++;
+            }
+            else {
+                mess[s] = mess[q];
+                q++;
+                s++;
+            }
+        }
+        mess.resize(s);
+    }
+
+    std::string ver;
+    std::unordered_map<std::string, std::string> headers;
+    std::string body;
+};
+
+class Request : public HttpMessage {
+public:
+    const std::string& GetMethod() const {
+        return method;
+    }
+
+    const std::string& GetURL() const {
+        return url;
+    }
+
+    void SetURL(const std::string& _url) {
+        url = _url;
+    }
+
+    void SetMethod(const std::string& _method) {
+        method = _method;
+    }
+
+    bool Normalize(const std::string& message) {
+        // remove_r(message);
+        ClearMessageHeaders();
+
+        size_t beg = 0;
+        size_t end = 0;
         end = message.find(' ', beg);
+        if(end == std::string::npos) return false;
         method = message.substr(beg, end - beg);
 
-        beg = end + 1;
+        beg = message.find_first_not_of(' ', end);
+        if(beg == std::string::npos) return false;
         end = message.find(' ', beg);
+        if(end == std::string::npos) return false;
         url = message.substr(beg, end - beg);
 
-        beg = end + 1;
-        end = message.find('\n', beg);
+        beg = message.find_first_not_of(' ', end);
+        if(beg == std::string::npos) return false;
+        if((end = message.find_first_of("\r\n", beg)) == std::string::npos) return false;
         ver = message.substr(beg, end - beg);
 
-        while(end < message.size() && message[end] == '\n') {
-            beg = end + 1;
-            if(message[beg] == '\n') {
-                if(method == "GET") {
-                    return true;
-                }
-                else {
-                    break;
-                }
-            }
-            end = message.find(':', beg);
+        while(end < message.size()) {
+            if(message[end] == '\n') end = end + 1;
+            else beg = end + 2;
+            if(message[beg] == '\n' || message[beg] == '\r') break;
+            if( (end = message.find(':', beg)) == std::string::npos) return false;
             std::string key = message.substr(beg, end - beg);
             
             beg = end + 1;  
-            if(message[beg] == ' ') beg++; // skip the ' ' after ':'
-            end = message.find('\n', beg);
+            beg = message.find_first_not_of(' ', beg);
+            if(beg == std::string::npos) return false;
+            if((end = message.find_first_of("\r\n", beg)) == std::string::npos) return false;
             std::string val = message.substr(beg, end - beg);
 
             headers.emplace(key, val);
         }
-        beg++;  // \n
-        body = message.substr(beg);
+
+        if(message[beg] == '\n') beg++;  // \n
+        else beg += 2;
+        if(beg < message.size()) body = message.substr(beg);
         return true;
     }
 
@@ -64,42 +142,33 @@ public:
         return req;
     }
 
-private:
-    void remove_r(std::string& mess) {
-        int s = 0;
-        int q = 0;
-        while(q < mess.size()) {
-            if(mess[q] == '\r') {
-                q++;
-            }
-            else {
-                mess[s] = mess[q];
-                q++;
-                s++;
-            }
+    void PrintRequest() {
+        std::cout << "HTTP Request : " << std::endl;
+        std::cout << "Method : " << method << std::endl;
+        std::cout << "URL : " << url << std::endl;
+        std::cout << "Version : " << ver << std::endl;
+        std::cout << std::endl;
+
+        std::cout << "Request Head : " << std::endl;
+        for(auto& p : headers) {
+            std::cout << p.first << " : " << p.second << std::endl;
         }
-        mess.resize(s);
+        std::cout << std::endl;
+        std::cout << "Request Body : " << std::endl;
+        std::cout << body << std::endl;
     }
 
-public:
+private:
     std::string method;         // GET POST PUT ...
     std::string url;            // URL
-    std::string ver;            // "HTTP/1.1"
-    std::unordered_map<std::string, std::string> headers;
-    std::string body;
 };
 
-class Response {
+class Response : public HttpMessage {
 public:
     Response()
-        : ver("HTTP/1.1")
-        , state(200)
+        : state(200)
         , reason("OK")
     {}
-
-    void SetVersion(std::string = "HTTP/1.1") {
-        ver = "HTTP/1.1";
-    }
 
     void SetState(int val = 200) {
         if(val < 100 || val > 600) {
@@ -109,22 +178,16 @@ public:
         state = val;
     }
 
-    void SetReason(std::string str = "OK") {
+    void SetReason(std::string&& str = "OK") {
         reason = str;
     }
 
-    void AddAttribute(std::string key, std::string val) {
-        if(headers.find(key) == headers.end()) {
-            headers.emplace(key, val);
-        }
+    int GetState() const {
+        return state;
     }
 
-    void SetMessageBodyCopy(const std::string& str) {
-        body = str;
-    }
-
-    void SetMessageBodyMove(const std::string& str) {
-        body = std::move(str);
+    const std::string& GetReason() {
+        return reason;
     }
 
     std::string Serialize() {
@@ -142,50 +205,69 @@ public:
         return resp;
     }
 
-public:
-    std::string ver;
+    bool Normalize(std::string& message) {
+        // remove_r(message);
+        ClearMessageHeaders();
+
+        size_t beg = 0;
+        size_t end = 0;
+
+        if( (end = message.find(' ', beg)) == std::string::npos) return false;
+        ver = message.substr(beg, end - beg);
+
+        beg = message.find_first_not_of(' ', end);
+        if(beg == std::string::npos) return false;
+        if( (end = message.find(' ', beg)) == std::string::npos) return false;
+        state = std::stoi(message.substr(beg, end - beg));
+
+        beg = message.find_first_not_of(' ', end);
+        if(beg == std::string::npos) return false;
+        if( (end = message.find_first_of("\n\r", beg)) == std::string::npos) return false;
+        reason = message.substr(beg, end - beg);
+
+        while(end < message.size()) {
+            if(message[beg] == '\n') beg = end + 1;
+            else beg = end + 2;
+            if(message[beg] == '\n' || message[beg] == '\r') break;
+            if( (end = message.find(':', beg)) == std::string::npos) return false;
+            std::string key = message.substr(beg, end - beg);
+            
+            beg = end + 1;  
+            beg = message.find_first_not_of(' ', beg);
+            if(beg == std::string::npos) return false;
+            if((end = message.find_first_of("\r\n", beg)) == std::string::npos) return false;
+            std::string val = message.substr(beg, end - beg);
+
+            headers.emplace(key, val);
+        }
+
+        if(message[beg] == '\n') beg++;
+        else beg += 2;
+        if(beg < message.size()) body = message.substr(beg);
+
+        return true;
+    }
+
+    void PrintResponse() {
+        std::cout << "HTTP Response : " << std::endl;
+        std::cout << "Version : " << ver << std::endl;
+        std::cout << "State Code : " << state << std::endl;
+        std::cout << "State : " << reason << std::endl; 
+        std::cout << std::endl;
+
+        std::cout << "Response Head : " << std::endl;
+        for(auto& p : headers) {
+            std::cout << p.first << " : " << p.second << std::endl;
+        }
+        std::cout << std::endl;
+
+        std::cout << "Response Body : " << std::endl;
+        std::cout << body << std::endl;
+    }
+
+private:
     int state;
     std::string reason;
-    std::unordered_map<std::string, std::string> headers;
-    std::string body;
 };
-
-std::ostream& operator<<(std::ostream& _cout, Request& req) {
-    _cout << "HTTP Request : " << std::endl;
-    _cout << "Method : " << req.method << std::endl;
-    _cout << "URL : " << req.url << std::endl;
-    _cout << "Version : " << req.ver << std::endl;
-    _cout << std::endl;
-
-    _cout << "Request Head : " << std::endl;
-    for(auto& p : req.headers) {
-        _cout << p.first << " : " << p.second << std::endl;
-    }
-    _cout << std::endl;
-    _cout << "Request Body : " << std::endl;
-    _cout << req.body << std::endl;
-
-    return _cout;
-}
-
-std::ostream& operator<<(std::ostream& _cout, Response& resp) {
-    _cout << "HTTP Response : " << std::endl;
-    _cout << "Version : " << resp.ver << std::endl;
-    _cout << "State Code : " << resp.state << std::endl;
-    _cout << "State : " << resp.reason << std::endl; 
-    _cout << std::endl;
-
-    _cout << "Response Head : " << std::endl;
-    for(auto& p : resp.headers) {
-        _cout << p.first << " : " << p.second << std::endl;
-    }
-    _cout << std::endl;
-
-    _cout << "Response Body : " << std::endl;
-    _cout << resp.body << std::endl;
-
-    return _cout;
-}
-
 
 #endif // _MYHTTP_H_
