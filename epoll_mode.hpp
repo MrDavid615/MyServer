@@ -31,13 +31,19 @@ public:
         }
     }
 
+    ~Acceptor() {
+        if(fd_ >= 0) close(fd_);
+    }
+
     void Bind(int port, std::string ip = "") {
+        int opt = 1;
+        setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));   // Port Reuse In Wait Time
+
         addr_.sin_port = htons(port);
         addr_.sin_addr.s_addr = INADDR_ANY;
         addr_.sin_family = AF_INET;
         if(bind(fd_, (const sockaddr*)&addr_, sizeof(addr_)) < 0) {
             std::cout << "Acceptor :: Bind Error" << std::endl;
-            close(fd_);
             exit(-1);
         }
     }
@@ -45,7 +51,6 @@ public:
     void Listen() {
         if(listen(fd_, SOMAXCONN) < 0) {
             std::cout << "Acceptor :: Listen Error" << std::endl;
-            close(fd_);
             exit(-1);
         }
     }
@@ -72,7 +77,6 @@ private:
     sockaddr_in addr_;
 };
 
-
 /**
  * SubReactor based on epoll
  * wakeFd_ is fd interface, Acceptor write 8 bytes data to wakeFd_ to wake up Poller
@@ -98,6 +102,11 @@ public:
         epoll_ctl(epollFd_, EPOLL_CTL_ADD, wakeFd_, &ev);
     }
 
+    ~Poller() {
+        if(epollFd_ >= 0) close(epollFd_);
+        if(wakeFd_ >= 0) close(wakeFd_);
+    }
+
     Poller(const Poller&) = delete;
     Poller& operator=(const Poller&) = delete;
     Poller(Poller&&) = default;
@@ -119,9 +128,6 @@ public:
             if(readyCount < 0) {
                 std::cout << "Poller :: Run Error by EPOLL_WAIT" << std::endl;
                 exit(-1);
-            }
-            else {
-                std::cout << "Poller :: " << readyCount << " event trigger" << std::endl;
             }
 
             for(int i = 0; i < readyCount; i++) {
@@ -151,19 +157,21 @@ public:
                     char buf[1024];
                     ssize_t n;
                     std::string data;
+                    data.reserve(4096);
                 
                     while ((n = read(fd, buf, sizeof(buf))) > 0) {
                         data.append(buf, n);          // 按实际读到的字节数拼
                     }
                 
                     if (n == 0) {                     // 对端关闭
-                        std::cout << "Poller :: client close" << std::endl;
+                        std::cout << "Poller :: client in fd : " << fd << " close" << std::endl;
                         disConn_cb_(fd);
                         RemoveFd(fd);
                         connNum_.fetch_sub(1, std::memory_order_relaxed);
                     } 
                     else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        std::cout << "Poller :: client error " << strerror(errno) << std::endl;
+                        std::cout << "Poller :: client error in fd : " << fd;
+                        std::cout << " errno is " << strerror(errno) << std::endl;
                         disConn_cb_(fd);
                         RemoveFd(fd);
                         connNum_.fetch_sub(1, std::memory_order_relaxed);
